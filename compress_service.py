@@ -109,17 +109,24 @@ def compress():
             "message": "File compressed successfully."
         })
 
-    return send_file(
-        io.BytesIO(compressed),
+    out = io.BytesIO(compressed)
+    out.seek(0)
+
+    response = send_file(
+        out,
         mimetype="image/jpeg",
         as_attachment=False,
-        download_name="compressed.jpg",
-        headers={
-            "X-Original-Size": str(len(img_bytes)),
-            "X-Final-Size": str(final_size),
-            "X-Ratio": str(ratio)
-        }
+        download_name="compressed.jpg"
     )
+
+    # add custom headers safely
+    response.headers["X-Original-Size"] = str(len(img_bytes))
+    response.headers["X-Final-Size"] = str(final_size)
+    response.headers["X-Ratio"] = str(ratio)
+    response.headers["Content-Disposition"] = "inline; filename=compressed.jpg"
+
+    return response
+
 
 
 @app.route("/health")
