@@ -32,7 +32,12 @@ def fetch_image(url, timeout=15):
 def compress_image_bytes(image_bytes, content_type):
     img = Image.open(io.BytesIO(image_bytes))
 
-    if img.mode not in ("RGB", "RGBA"):
+    # Convert RGBA or other modes to RGB (JPEG can't handle transparency)
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[-1])  # use alpha channel as mask
+        img = background
+    elif img.mode != "RGB":
         img = img.convert("RGB")
 
     w, h = img.size
