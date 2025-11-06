@@ -87,8 +87,13 @@ def compress():
     final_size = len(compressed)
     ratio = round(final_size / max(1, len(img_bytes)), 3)
 
-    json_flag = str(request.args.get("json", "")).lower() == "true" or str(payload.get("json", "")).lower() == "true"
-    print("DEBUG JSON FLAG:", request.args.get("json"), payload.get("json"))
+    json_flag = any([
+        str(request.args.get("json", "")).lower() == "true",
+        str(request.form.get("json", "")).lower() == "true",
+        str(payload.get("json", "")).lower() == "true"
+    ])
+
+    print("DEBUG JSON FLAG:", request.args.get("json"), request.form.get("json"), payload.get("json"))
 
     if json_flag:
         return jsonify({
