@@ -99,11 +99,28 @@ def compress():
     final_size = len(compressed)
     ratio = round(final_size / max(1, len(img_bytes)), 3)
 
-    # respond with binary image; Make will accept it as file
-    return send_file(io.BytesIO(compressed), mimetype="image/jpeg", as_attachment=False,
-                     download_name=f"compressed.jpg",
-                     headers={"X-Original-Size": str(len(img_bytes)), "X-Final-Size": str(final_size),
-                              "X-Ratio": str(ratio)})
+    # if ?json=true, return summary instead of file
+    if request.args.get("json") == "true":
+        return jsonify({
+            "status": "ok",
+            "original_kb": round(len(img_bytes) / 1024, 1),
+            "compressed_kb": round(final_size / 1024, 1),
+            "ratio": ratio,
+            "message": "File compressed successfully."
+        })
+
+    # otherwise respond with binary (for Make)
+    return send_file(
+        io.BytesIO(compressed),
+        mimetype="image/jpeg",
+        as_attachment=False,
+        download_name="compressed.jpg",
+        headers={
+            "X-Original-Size": str(len(img_bytes)),
+            "X-Final-Size": str(final_size),
+            "X-Ratio": str(ratio)
+        }
+    )
 
 
 @app.route("/health")
