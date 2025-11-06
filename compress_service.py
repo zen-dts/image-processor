@@ -4,8 +4,7 @@
 
 import io
 import os
-import math
-from flask import Flask, request, send_file, jsonify, abort
+from flask import Flask, request, send_file, jsonify
 import requests
 from PIL import Image
 
@@ -26,18 +25,16 @@ def fetch_image(url, timeout=15):
     r.raise_for_status()
     content_type = r.headers.get("Content-Type", "").split(";")[0]
     content = r.content
+    r.close()
     return content, content_type
 
 
 def compress_image_bytes(image_bytes, content_type):
-    # open image
     img = Image.open(io.BytesIO(image_bytes))
 
-    # convert to RGB if needed
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
 
-    # resize if large
     w, h = img.size
     max_side = max(w, h)
     if max_side > MAX_DIM:
@@ -45,12 +42,10 @@ def compress_image_bytes(image_bytes, content_type):
         new_size = (int(w * scale), int(h * scale))
         img = img.resize(new_size, Image.LANCZOS)
 
-    # try saving as JPEG (best compression for photographs)
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True)
     out_bytes = out.getvalue()
 
-    # if still too big, reduce quality iteratively
     quality = JPEG_QUALITY
     while len(out_bytes) > MAX_BYTES and quality > 30:
         quality = max(30, int(quality * 0.85))
@@ -63,7 +58,6 @@ def compress_image_bytes(image_bytes, content_type):
 
 @app.route("/compress", methods=["POST"])
 def compress():
-    # simple auth
     key = request.headers.get("X-Api-Key") or request.args.get("api_key")
     if key != API_KEY:
         return jsonify({"error": "unauthorized"}), 401
@@ -78,29 +72,25 @@ def compress():
     except Exception as e:
         return jsonify({"error": "failed to fetch", "detail": str(e)}), 400
 
-    # quick mime check (optional)
     if content_type not in ALLOWED_MIMES:
-        # allow processing anyway, but warn
-        pass
+        print(f"[WARN] Unexpected MIME type: {content_type}")
 
-    # if small enough, just return original
     if len(img_bytes) <= MAX_BYTES:
-        # return original image unchanged
         return send_file(io.BytesIO(img_bytes), mimetype=content_type, as_attachment=False,
-                         download_name="image"+((".jpg") if content_type.startswith("image/") else ".img"))
+                         download_name="image" + ((".jpg") if content_type.startswith("image/") else ".img"))
 
-    # compress
     try:
         compressed = compress_image_bytes(img_bytes, content_type)
     except Exception as e:
         return jsonify({"error": "compress_failed", "detail": str(e)}), 500
 
-    # final size check
     final_size = len(compressed)
     ratio = round(final_size / max(1, len(img_bytes)), 3)
 
-    # if ?json=true, return summary instead of file
-    if request.args.get("json") == "true":
+    json_flag = str(request.args.get("json", "")).lower() == "true" or str(payload.get("json", "")).lower() == "true"
+    print("DEBUG JSON FLAG:", request.args.get("json"), payload.get("json"))
+
+    if json_flag:
         return jsonify({
             "status": "ok",
             "original_kb": round(len(img_bytes) / 1024, 1),
@@ -109,7 +99,6 @@ def compress():
             "message": "File compressed successfully."
         })
 
-    # otherwise respond with binary (for Make)
     return send_file(
         io.BytesIO(compressed),
         mimetype="image/jpeg",
@@ -125,7 +114,7 @@ def compress():
 
 @app.route("/health")
 def health():
-    return "ok"
+    return jsonify({"status": "ok", "service": "imgcompress"})
 
 
 if __name__ == "__main__":
