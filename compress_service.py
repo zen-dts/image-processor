@@ -1,7 +1,3 @@
-# compress_service.py
-# Simple image-compression microservice
-# Dependencies: pip install flask requests pillow python-magic
-
 import io
 import os
 from flask import Flask, request, send_file, jsonify
@@ -18,16 +14,13 @@ JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", 86))
 
 ALLOWED_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
-
 def fetch_image(url, timeout=15):
     headers = {"User-Agent": "ImageCompressor/1.0"}
     r = requests.get(url, headers=headers, timeout=timeout, stream=True)
     r.raise_for_status()
     content_type = r.headers.get("Content-Type", "").split(";")[0]
     content = r.content
-    r.close()
     return content, content_type
-
 
 def compress_image_bytes(image_bytes, content_type):
     img = Image.open(io.BytesIO(image_bytes))
@@ -40,6 +33,7 @@ def compress_image_bytes(image_bytes, content_type):
     elif img.mode != "RGB":
         img = img.convert("RGB")
 
+    # Resize if too large
     w, h = img.size
     max_side = max(w, h)
     if max_side > MAX_DIM:
@@ -60,7 +54,6 @@ def compress_image_bytes(image_bytes, content_type):
 
     return out_bytes
 
-
 @app.route("/compress", methods=["POST"])
 def compress():
     key = request.headers.get("X-Api-Key") or request.args.get("api_key")
@@ -78,29 +71,23 @@ def compress():
         return jsonify({"error": "failed to fetch", "detail": str(e)}), 400
 
     if content_type not in ALLOWED_MIMES:
-        print(f"[WARN] Unexpected MIME type: {content_type}")
+        pass  # allow processing anyway
 
     if len(img_bytes) <= MAX_BYTES:
         return send_file(io.BytesIO(img_bytes), mimetype=content_type, as_attachment=False,
-                         download_name="image" + ((".jpg") if content_type.startswith("image/") else ".img"))
+                         download_name="image.jpg")
 
     try:
         compressed = compress_image_bytes(img_bytes, content_type)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "compress_failed", "detail": str(e)}), 500
 
     final_size = len(compressed)
     ratio = round(final_size / max(1, len(img_bytes)), 3)
 
-    json_flag = any([
-        str(request.args.get("json", "")).lower() == "true",
-        str(request.form.get("json", "")).lower() == "true",
-        str(payload.get("json", "")).lower() == "true"
-    ])
-
-    print("DEBUG JSON FLAG:", request.args.get("json"), request.form.get("json"), payload.get("json"))
-
-    if json_flag:
+    if request.args.get("json") == "true":
         return jsonify({
             "status": "ok",
             "original_kb": round(len(img_bytes) / 1024, 1),
@@ -111,15 +98,7 @@ def compress():
 
     out = io.BytesIO(compressed)
     out.seek(0)
-
-    response = send_file(
-        out,
-        mimetype="image/jpeg",
-        as_attachment=False,
-        download_name="compressed.jpg"
-    )
-
-    # add custom headers safely
+    response = send_file(out, mimetype="image/jpeg", as_attachment=False, download_name="compressed.jpg")
     response.headers["X-Original-Size"] = str(len(img_bytes))
     response.headers["X-Final-Size"] = str(final_size)
     response.headers["X-Ratio"] = str(ratio)
@@ -127,12 +106,9 @@ def compress():
 
     return response
 
-
-
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "imgcompress"})
-
+    return "ok"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
