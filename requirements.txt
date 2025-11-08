@@ -1,4 +1,4 @@
-flask
+Flask
+gunicorn
+Pillow
 requests
-pillow
-python-magic
