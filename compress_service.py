@@ -28,7 +28,16 @@ def compress_image_bytes(image_bytes, content_type):
     # Convert RGBA or other modes to RGB (JPEG can't handle transparency)
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
         background = Image.new("RGB", img.size, (255, 255, 255))
-        background.paste(img, mask=img.split()[-1])  # use alpha channel as mask
+        try:
+            # Some images have invalid or mismatched alpha masks
+            alpha = img.split()[-1]
+            if alpha.size != img.size:
+                raise ValueError("Invalid alpha channel size")
+            background.paste(img, mask=alpha)
+        except Exception:
+            # Fall back: flatten image without mask
+            img = img.convert("RGB")
+            background.paste(img)
         img = background
     elif img.mode != "RGB":
         img = img.convert("RGB")
