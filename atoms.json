@@ -1,0 +1,22 @@
+{
+  "atoms": [
+    {
+      "id": "image-compress",
+      "name": "Lightweight image compression service",
+      "capability": "Fetch a remote image by URL and return a JPEG capped in resolution and file size, suitable as a pre-processing step before vision models.",
+      "contract": {
+        "endpoint": "POST /compress",
+        "auth": "X-Api-Key header (COMPRESS_API_KEY env)",
+        "input": { "url": "publicly fetchable image URL (JSON body, form field, or query param)" },
+        "output": "JPEG, longest side <= MAX_DIM (default 1600 px), <= MAX_BYTES (default 4 MB); pass-through if already small enough; ?json=true returns size stats instead",
+        "errors": { "400": "missing url / fetch failed / compress failed (JSON with detail)", "401": "bad or missing api key" },
+        "limits": { "max_download": "25 MB source file", "max_pixels": "40 MP decode ceiling" }
+      },
+      "host": "https://imgcompress-cc9w.onrender.com (Render free tier, spins down when idle)",
+      "source": "https://github.com/zen-dts/image-processor",
+      "consumers": [
+        "Rabalux Product Description Flow (make.com scenario, in production since 2025)"
+      ]
+    }
+  ]
+}

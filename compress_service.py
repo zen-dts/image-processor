@@ -11,6 +11,12 @@ API_KEY = os.environ.get("COMPRESS_API_KEY", "changeme")   # set in env in produ
 MAX_BYTES = int(os.environ.get("MAX_BYTES", 4 * 1024 * 1024))  # 4 MB default
 MAX_DIM = int(os.environ.get("MAX_DIM", 1600))  # largest side in px
 JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", 86))
+MAX_DOWNLOAD_BYTES = int(os.environ.get("MAX_DOWNLOAD_BYTES", 25 * 1024 * 1024))  # 25 MB
+MAX_PIXELS = int(os.environ.get("MAX_PIXELS", 40_000_000))  # 40 MP decode ceiling
+
+# Pillow's own decompression-bomb guard only warns by default; on a 512 MB
+# instance an oversized decode is fatal, so enforce a hard ceiling instead.
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
 ALLOWED_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
@@ -19,14 +25,36 @@ def fetch_image(url, timeout=15):
     r = requests.get(url, headers=headers, timeout=timeout, stream=True)
     r.raise_for_status()
     content_type = r.headers.get("Content-Type", "").split(";")[0]
-    content = r.content
-    return content, content_type
+    declared = r.headers.get("Content-Length")
+    if declared and int(declared) > MAX_DOWNLOAD_BYTES:
+        raise ValueError(f"source file too large ({declared} bytes, limit {MAX_DOWNLOAD_BYTES})")
+    chunks = []
+    total = 0
+    for chunk in r.iter_content(64 * 1024):
+        total += len(chunk)
+        if total > MAX_DOWNLOAD_BYTES:
+            raise ValueError(f"source file too large (over {MAX_DOWNLOAD_BYTES} bytes)")
+        chunks.append(chunk)
+    return b"".join(chunks), content_type
 
 def compress_image_bytes(image_bytes, content_type):
     img = Image.open(io.BytesIO(image_bytes))
 
+    if img.width * img.height > MAX_PIXELS:
+        raise ValueError(f"image too large to process ({img.width}x{img.height}, limit {MAX_PIXELS} px)")
+
+    # For JPEGs, decode directly at reduced resolution instead of full size.
+    img.draft("RGB", (MAX_DIM, MAX_DIM))
+
+    # Shrink BEFORE flattening transparency: the white-background canvas below
+    # must be built at output size, never at source resolution (a full-size
+    # RGBA + RGB pair of a large product PNG exceeds the 512 MB instance).
+    img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
+
     # Convert RGBA or other modes to RGB (JPEG can't handle transparency)
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        if img.mode == "P":
+            img = img.convert("RGBA")
         background = Image.new("RGB", img.size, (255, 255, 255))
         try:
             # Some images have invalid or mismatched alpha masks
@@ -34,21 +62,12 @@ def compress_image_bytes(image_bytes, content_type):
             if alpha.size != img.size:
                 raise ValueError("Invalid alpha channel size")
             background.paste(img, mask=alpha)
-        except Exception:
-            # Fall back: flatten image without mask
-            img = img.convert("RGB")
-            background.paste(img)
+        except Exception as err:
+            print(f"[WARN] Transparency handling issue: {err}")
+            background.paste(img.convert("RGB"))
         img = background
     elif img.mode != "RGB":
         img = img.convert("RGB")
-
-    # Resize if too large
-    w, h = img.size
-    max_side = max(w, h)
-    if max_side > MAX_DIM:
-        scale = MAX_DIM / float(max_side)
-        new_size = (int(w * scale), int(h * scale))
-        img = img.resize(new_size, Image.LANCZOS)
 
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True)
@@ -91,7 +110,7 @@ def compress():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"error": "compress_failed", "detail": str(e)}), 500
+        return jsonify({"error": "compress_failed", "detail": str(e)}), 400
 
     final_size = len(compressed)
     ratio = round(final_size / max(1, len(img_bytes)), 3)
